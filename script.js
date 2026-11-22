@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arras Discord Username Identity
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Shows discord username in player identity
 // @author       pr2000
 // @match        https://arras.io/
@@ -32,66 +32,76 @@ updateShowIdMenu();
 const usernameCache = new Map();
 const userCache = new Map();
 const imageCache = new Map();
-const promises = new Map();
+const userPromises = new Map();
 
 arras.server.on("m", ({ message }) => {
-    const match = message.match(/(<unknown>|@\S*) - (\d*)/m);
-    if (!match) return;
-    const [original, name, id] = match;
-    if (!id) return;
+    const matches = [...message.matchAll(/(<unknown>|@\S*) - (\d*)/g)];
+    if (!matches.length) return;
 
-    function getMessage(user) {
-        return message.replace(original, `${name} - \u3000 ${user.global_name} (@${user.username})${showId ? ` [${user.id}]` : ""}`);
-    }
-    function getErrorMessage() {
-        return message.replace(original, `${name} - ${id} [user not found]`);
-    }
+    const promises = [];
+    for (const match of matches) {
+        const [original, name, id] = match;
 
-    const username = usernameCache.get(id);
-    if (username) {
-        return {
-            message: getMessage(userCache.get(username))
-        };
-    } else if (promises.has(id)) {
-        promises.get(id).then(() => {
-            arras.server.send("m", {
-                message: getMessage(response)
-            });
-        });
-        return false;
-    } else {
-        promises.set(id,
-            fetch(`https://discord-user.pr2000.workers.dev/${id}`)
+        function putMessage(user) {
+            message = message.replace(original, `${name} - \u3000 ${user.global_name} (@${user.username})${showId ? ` [${user.id}]` : ""}`);
+        }
+        function putErrorMessage() {
+            message = message.replace(original, `${name} - ${id} [user not found]`);
+        }
+
+        const username = usernameCache.get(id);
+        if (username) {
+            putMessage(userCache.get(username));
+        } else if (userPromises.has(id)) {
+            promises.push(
+                userPromises.get(id)
+                    .then(user => {
+                        if (user) putMessage(user)
+                        else putErrorMessage();
+                    })
+            );
+        } else {
+            const req = fetch(`https://discord-user.pr2000.workers.dev/${id}`)
                 .then(r => r.json())
-                .then(data => {
-                    if (data.error) {
-                        arras.server.send("m", {
-                            message: getErrorMessage()
-                        });
-                        return;
+                .then(async user => {
+                    if (user.error) {
+                        putErrorMessage();
+                        return false;
                     }
                     const image = new Image();
                     image.crossOrigin = "anonymous";
-                    image.src = data.avatar ? `https://cdn.discordapp.com/avatars/${data.id}/${data.avatar}.png` : `https://cdn.discordapp.com/embed/avatars/${(BigInt(data.id) >> 22n) % 6n}.png`;
-                    image.addEventListener("load", () => {
-                        usernameCache.set(data.id, data.username);
-                        userCache.set(data.username, data);
-                        imageCache.set(data.username, image);
-                        promises.delete(id);
-                        arras.server.send("m", {
-                            message: getMessage(data)
+                    image.src = user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : `https://cdn.discordapp.com/embed/avatars/${(BigInt(user.id) >> 22n) % 6n}.png`;
+                    await new Promise((resolve, reject) => {
+                        image.addEventListener("load", () => {
+                            imageCache.set(user.username, image);
+                            userCache.set(user.username, user);
+                            usernameCache.set(user.id, user.username);
+                            userPromises.delete(id);
+                            resolve();
                         });
+                        image.addEventListener("error", () => {
+                            reject();
+                        })
                     });
-                }).catch(e => {
-                    arras.server.send("m", {
-                        message: getErrorMessage()
-                    });
-                    console.error(e);
-                    return;
+                    putMessage(user);
+                    return user;
                 })
-        );
-        return false;
+                .catch(() => {
+                    putErrorMessage();
+                    return false;
+                });
+            userPromises.set(id, req);
+            promises.push(req);
+        }
     }
+
+    if (promises.length) {
+        Promise.all(promises)
+            .then(() => {
+                arras.server.send("m", { message });
+            });
+        return false;
+    } else return { message };
 });
 
 const fillText = CanvasRenderingContext2D.prototype.fillText;
