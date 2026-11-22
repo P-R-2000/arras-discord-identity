@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arras Discord Username Identity
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Shows discord username in player identity
 // @author       pr2000
 // @match        https://arras.io/
@@ -35,16 +35,16 @@ const imageCache = new Map();
 const promises = new Map();
 
 arras.server.on("m", ({ message }) => {
-    const match = message.match(/^- Identity: (<unknown>|@\S*)(?: - (\d*)|)$/m);
+    const match = message.match(/(<unknown>|@\S*) - (\d*)/m);
     if (!match) return;
-    const [line, name, id] = match;
+    const [original, name, id] = match;
     if (!id) return;
 
     function getMessage(user) {
-        return message.replace(line, `- Identity: ${name} - \u3000 ${user.global_name} (@${user.username})${showId ? ` [${user.id}]` : ""}`);
+        return message.replace(original, `${name} - \u3000 ${user.global_name} (@${user.username})${showId ? ` [${user.id}]` : ""}`);
     }
     function getErrorMessage() {
-        return message.replace(line, `- Identity: ${name} - ${id} [user not found]`);
+        return message.replace(original, `${name} - ${id} [user not found]`);
     }
 
     const username = usernameCache.get(id);
@@ -99,7 +99,7 @@ CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
     const imgIndex = text.indexOf("\u3000");
 
     if (imgIndex !== -1) {
-        const match = text.match(/^- Identity: (?:<unknown>|@\S*) - \u3000 (.*) \(@(.*)\)/);
+        const match = text.match(/(?:<unknown>|@\S*) - \u3000 (.*) \(@([a-zA-Z0-9_.]*)\)/);
 
         if (match) {
             const [_, name, username] = match;
@@ -120,19 +120,17 @@ CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
             this.restore();
 
             if (user.banner_color) {
-                const nameIndex = text.indexOf(name);
-                const firstPart = text.slice(0, nameIndex);
-                const namePart = text.slice(nameIndex, nameIndex + name.length);
-                const secondPart = text.slice(nameIndex + name.length);
+                const firstPart = text.slice(0, imgIndex + 2);
+                const secondPart = text.slice(imgIndex + 2 + name.length);
 
                 fillText.call(this, firstPart, x, y, maxWidth);
                 x += this.measureText(firstPart).width;
 
                 const style = this.fillStyle;
                 this.fillStyle = user.banner_color;
-                fillText.call(this, namePart, x, y, maxWidth);
+                fillText.call(this, name, x, y, maxWidth);
                 this.fillStyle = style;
-                x += this.measureText(namePart).width;
+                x += this.measureText(name).width;
 
                 fillText.call(this, secondPart, x, y, maxWidth);
 
